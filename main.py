@@ -24,6 +24,8 @@ class FootballBettingModel:
             "In-Game Away Xg": tk.DoubleVar(),
             "Home Possession %": tk.DoubleVar(),
             "Away Possession %": tk.DoubleVar(),
+            "Home Shots on Target": tk.IntVar(),  # New field
+            "Away Shots on Target": tk.IntVar(),  # New field
             "Account Balance": tk.DoubleVar(),
             "Live Home Odds": tk.DoubleVar(),
             "Live Away Odds": tk.DoubleVar(),
@@ -96,6 +98,9 @@ class FootballBettingModel:
         away_avg_goals_scored = self.fields["Away Avg Goals Scored"].get()
         away_avg_goals_conceded = self.fields["Away Avg Goals Conceded"].get()
 
+        home_sot = self.fields["Home Shots on Target"].get()  # New field
+        away_sot = self.fields["Away Shots on Target"].get()  # New field
+
         if self.previous_values:
             previous_in_game_home_xg = self.previous_values.get("In-Game Home Xg", in_game_home_xg)
             previous_in_game_away_xg = self.previous_values.get("In-Game Away Xg", in_game_away_xg)
@@ -153,8 +158,21 @@ class FootballBettingModel:
         fair_away_odds = 1 / away_win_probability
         fair_draw_odds = 1 / draw_probability
 
-        best_lay = None
-        best_edge = float('-inf')
+        # Weighted calculation of which team is more likely to score next
+        home_contribution = (lambda_home * 0.4) + (in_game_home_xg * 0.3) + (home_sot * 0.2) + (home_goals * 0.1)
+        away_contribution = (lambda_away * 0.4) + (in_game_away_xg * 0.3) + (away_sot * 0.2) + (away_goals * 0.1)
+
+        if home_contribution > away_contribution:
+            goal_source = "Home"
+            lambda_home -= 0.04  # Bias toward stronger team
+        elif away_contribution > home_contribution:
+            goal_source = "Away"
+            lambda_away += 0.04  # More variance for weaker team
+        else:
+            goal_source = "Even"
+
+        lay_opportunities = []
+        max_edge = 0  # Track the highest edge
 
         results = "Fair Odds & Edge:\n"
 
@@ -164,14 +182,34 @@ class FootballBettingModel:
             edge = (fair_odds - live_odds) / fair_odds if live_odds < fair_odds else 0.0000
             results += f"{outcome}: Fair {fair_odds:.2f} | Edge {edge:.4f}\n"
             
-            if live_odds < fair_odds and live_odds < 20 and edge > best_edge:
-                best_edge = edge
+            if live_odds < fair_odds and live_odds < 20 and edge > 0:
                 kelly_fraction = self.dynamic_kelly(edge, live_odds)
                 stake = account_balance * kelly_fraction
                 liability = stake * (live_odds - 1)
-                best_lay = f"Lay {outcome} at {live_odds:.2f} | Stake: {stake:.2f} | Liability: {liability:.2f}"
 
-        results += f"\nRecommended Bet:\n{best_lay if best_lay else 'No value lay bet found.'}"
+                lay_opportunities.append((edge, outcome, live_odds, stake, liability))
+
+                if edge > max_edge:
+                    max_edge = edge  # Track the highest edge
+
+        if lay_opportunities:
+            results += "\nLaying Opportunities:\n"
+            for edge, outcome, live_odds, stake, liability in sorted(lay_opportunities, reverse=True):
+                color = "green"  # Default to green for small edges
+                if edge == max_edge:
+                    color = "red"  # Highlight the best edge in red
+                elif edge > 0.03:  # Medium edge
+                    color = "orange"
+
+                results += f"\n🟢 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f}" \
+                    if color == "green" else \
+                    f"\n🟠 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f}" \
+                    if color == "orange" else \
+                    f"\n🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f}"
+        else:
+            results += "\nNo value lay bets found."
+
+        results += f"\nGoal Probability: {home_win_probability + away_win_probability:.2%} ({goal_source})\n"
         self.result_label.config(text=results)
 
 if __name__ == "__main__":
