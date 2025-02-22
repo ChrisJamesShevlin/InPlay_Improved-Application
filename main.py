@@ -7,7 +7,15 @@ class FootballBettingModel:
         self.root = root
         self.root.title("Football Betting Model")
         self.create_widgets()
-        self.previous_values = {}
+        self.history = {
+            "home_xg": [],
+            "away_xg": [],
+            "home_sot": [],
+            "away_sot": [],
+            "home_possession": [],
+            "away_possession": []
+        }
+        self.history_length = 10  # Store last 10 updates
 
     def create_widgets(self):
         self.fields = {
@@ -55,7 +63,14 @@ class FootballBettingModel:
                 var.set(0.0)
             elif isinstance(var, tk.IntVar):
                 var.set(0)
-        self.previous_values.clear()
+        self.history = {
+            "home_xg": [],
+            "away_xg": [],
+            "home_sot": [],
+            "away_sot": [],
+            "home_possession": [],
+            "away_possession": []
+        }
 
     def zero_inflated_poisson_probability(self, lam, k, p_zero=0.06):
         if k == 0:
@@ -77,6 +92,18 @@ class FootballBettingModel:
             return max(0, scaled_fraction)
         
         return 0
+
+    def update_history(self, key, value):
+        """Store the last 10 values of a given key."""
+        if len(self.history[key]) >= self.history_length:
+            self.history[key].pop(0)  # Remove oldest entry
+        self.history[key].append(value)
+
+    def get_recent_trend(self, key):
+        """Get the recent change over last 3 entries."""
+        if len(self.history[key]) < 3:
+            return 0  # Not enough data
+        return self.history[key][-1] - self.history[key][-3]  # Change over last 3 updates
 
     def calculate_fair_odds(self):
         home_xg = self.fields["Home Xg"].get()
@@ -101,28 +128,12 @@ class FootballBettingModel:
         home_sot = self.fields["Home Shots on Target"].get()  # New field
         away_sot = self.fields["Away Shots on Target"].get()  # New field
 
-        if self.previous_values:
-            previous_in_game_home_xg = self.previous_values.get("In-Game Home Xg", in_game_home_xg)
-            previous_in_game_away_xg = self.previous_values.get("In-Game Away Xg", in_game_away_xg)
-            previous_home_possession = self.previous_values.get("Home Possession %", home_possession)
-            previous_away_possession = self.previous_values.get("Away Possession %", away_possession)
-
-            home_xg_change = in_game_home_xg - previous_in_game_home_xg
-            away_xg_change = in_game_away_xg - previous_in_game_away_xg
-            home_possession_change = home_possession - previous_home_possession
-            away_possession_change = away_possession - previous_away_possession
-
-            in_game_home_xg = previous_in_game_home_xg + home_xg_change
-            in_game_away_xg = previous_in_game_away_xg + away_xg_change
-            home_possession = previous_home_possession + home_possession_change
-            away_possession = previous_away_possession + away_possession_change
-
-        self.previous_values = {
-            "In-Game Home Xg": in_game_home_xg,
-            "In-Game Away Xg": in_game_away_xg,
-            "Home Possession %": home_possession,
-            "Away Possession %": away_possession
-        }
+        self.update_history("home_xg", home_xg)
+        self.update_history("away_xg", away_xg)
+        self.update_history("home_sot", home_sot)
+        self.update_history("away_sot", away_sot)
+        self.update_history("home_possession", home_possession)
+        self.update_history("away_possession", away_possession)
 
         remaining_minutes = 90 - elapsed_minutes
         lambda_home = self.time_decay_adjustment(in_game_home_xg + (home_xg * remaining_minutes / 90), elapsed_minutes)
@@ -208,6 +219,19 @@ class FootballBettingModel:
                     f"\n🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f}"
         else:
             results += "\nNo value lay bets found."
+
+        trend_home_xg = self.get_recent_trend("home_xg")
+        trend_away_xg = self.get_recent_trend("away_xg")
+        trend_home_sot = self.get_recent_trend("home_sot")
+        trend_away_sot = self.get_recent_trend("away_sot")
+        trend_home_possession = self.get_recent_trend("home_possession")
+        trend_away_possession = self.get_recent_trend("away_possession")
+
+        # If a team is gaining momentum, adjust fair odds weight slightly
+        if trend_home_xg > 0.2 or trend_home_sot > 1 or trend_home_possession > 3:
+            results += "\n📈 Home team gaining momentum! Consider value bet.\n"
+        elif trend_away_xg > 0.2 or trend_away_sot > 1 or trend_away_possession > 3:
+            results += "\n📉 Away team gaining momentum! Consider value bet.\n"
 
         results += f"\nGoal Probability: {home_win_probability + away_win_probability:.2%} ({goal_source})\n"
         self.result_label.config(text=results)
