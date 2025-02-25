@@ -105,6 +105,60 @@ class FootballBettingModel:
             return 0  # Not enough data
         return self.history[key][-1] - self.history[key][-3]  # Change over last 3 updates
 
+    def detect_momentum_peak(self):
+        """Detects if a team is at peak momentum but the market hasn't adjusted yet."""
+        trend_home_xg = self.get_recent_trend("home_xg")
+        trend_away_xg = self.get_recent_trend("away_xg")
+        trend_home_sot = self.get_recent_trend("home_sot")
+        trend_away_sot = self.get_recent_trend("away_sot")
+
+        if trend_home_xg > 0.3 and trend_home_sot > 1:
+            return "📈 Home team at peak momentum! Possible lay bet on Away before odds adjust."
+        elif trend_away_xg > 0.3 and trend_away_sot > 1:
+            return "📉 Away team at peak momentum! Possible lay bet on Home before odds adjust."
+
+        return None  # No peak detected
+
+    def detect_market_overreaction(self, fair_home_odds, live_home_odds, fair_away_odds, live_away_odds, fair_draw_odds, live_draw_odds):
+        """Identifies when live odds overreact, creating a value lay opportunity."""
+        signals = []
+        
+        if live_home_odds > fair_home_odds * 1.15:
+            signals.append("⚠️ Market overreaction on Home odds!")
+        if live_away_odds > fair_away_odds * 1.15:
+            signals.append("⚠️ Market overreaction on Away odds!")
+        if live_draw_odds > fair_draw_odds * 1.15:
+            signals.append("⚠️ Market overreaction on Draw odds!")
+
+        return "\n".join(signals) if signals else None
+
+    def detect_reversal_point(self):
+        """Detects when a previously dominant team starts fading."""
+        trend_home_xg = self.get_recent_trend("home_xg")
+        trend_away_xg = self.get_recent_trend("away_xg")
+        trend_home_sot = self.get_recent_trend("home_sot")
+        trend_away_sot = self.get_recent_trend("away_sot")
+        trend_home_possession = self.get_recent_trend("home_possession")
+        trend_away_possession = self.get_recent_trend("away_possession")
+
+        if trend_home_xg < 0 and trend_home_sot < 0 and trend_away_possession > 3:
+            return "🔄 Home team losing momentum! Possible lay bet on Home."
+        elif trend_away_xg < 0 and trend_away_sot < 0 and trend_home_possession > 3:
+            return "🔄 Away team losing momentum! Possible lay bet on Away."
+
+        return None
+
+    def optimal_betting_window(self, elapsed_minutes, home_odds, away_odds, draw_odds):
+        """Suggests best match phase to place lay bets based on in-game trends."""
+        if elapsed_minutes < 30 and min(home_odds, away_odds) < 1.8:
+            return "⏳ Early game: Odds still settling. Be cautious with lays."
+        elif elapsed_minutes in range(60, 75) and max(home_odds, away_odds) > 2.5:
+            return "🔥 60-75 min: Strongest attack period. Possible lay opportunity."
+        elif elapsed_minutes > 80 and draw_odds < 2.0:
+            return "⚠️ Late game: Market tightening. Lay bets riskier now."
+
+        return None
+
     def calculate_fair_odds(self):
         home_xg = self.fields["Home Xg"].get()
         away_xg = self.fields["Away Xg"].get()
@@ -182,7 +236,7 @@ class FootballBettingModel:
         else:
             goal_source = "Even"
 
-        lay_opportunities = []
+        lay_opportunity = None
         max_edge = 0  # Track the highest edge
 
         results = "Fair Odds & Edge:\n"
@@ -193,30 +247,18 @@ class FootballBettingModel:
             edge = (fair_odds - live_odds) / fair_odds if live_odds < fair_odds else 0.0000
             results += f"{outcome}: Fair {fair_odds:.2f} | Edge {edge:.4f}\n"
             
-            if live_odds < fair_odds and live_odds < 20 and edge > 0:
+            if live_odds > fair_odds and live_odds < 20 and edge > max_edge:
                 kelly_fraction = self.dynamic_kelly(edge, live_odds)
                 stake = account_balance * kelly_fraction
                 liability = stake * (live_odds - 1)
 
-                lay_opportunities.append((edge, outcome, live_odds, stake, liability))
+                lay_opportunity = (edge, outcome, live_odds, stake, liability)
+                max_edge = edge  # Track the highest edge
 
-                if edge > max_edge:
-                    max_edge = edge  # Track the highest edge
-
-        if lay_opportunities:
-            results += "\nLaying Opportunities:\n"
-            for edge, outcome, live_odds, stake, liability in sorted(lay_opportunities, reverse=True):
-                color = "green"  # Default to green for small edges
-                if edge == max_edge:
-                    color = "red"  # Highlight the best edge in red
-                elif edge > 0.03:  # Medium edge
-                    color = "orange"
-
-                results += f"\n🟢 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f}" \
-                    if color == "green" else \
-                    f"\n🟠 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f}" \
-                    if color == "orange" else \
-                    f"\n🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f}"
+        if lay_opportunity:
+            edge, outcome, live_odds, stake, liability = lay_opportunity
+            color = "red"  # Highlight the best edge in red
+            results += f"\n🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f}"
         else:
             results += "\nNo value lay bets found."
 
@@ -234,7 +276,28 @@ class FootballBettingModel:
             results += "\n📉 Away team gaining momentum! Consider value bet.\n"
 
         results += f"\nGoal Probability: {home_win_probability + away_win_probability:.2%} ({goal_source})\n"
-        self.result_label.config(text=results)
+
+        # Detect momentum trends
+        momentum_signal = self.detect_momentum_peak()
+        reversal_signal = self.detect_reversal_point()
+        betting_window_signal = self.optimal_betting_window(elapsed_minutes, live_home_odds, live_away_odds, live_draw_odds)
+
+        # Detect market overreaction (for signals only)
+        overreaction_signal = self.detect_market_overreaction(fair_home_odds, live_home_odds, fair_away_odds, live_away_odds, fair_draw_odds, live_draw_odds)
+
+        # Combine all signals
+        betting_signals = "\n📊 Betting Insights:\n"
+        if momentum_signal:
+            betting_signals += f"{momentum_signal}\n"
+        if reversal_signal:
+            betting_signals += f"{reversal_signal}\n"
+        if betting_window_signal:
+            betting_signals += f"{betting_window_signal}\n"
+        if overreaction_signal:
+            betting_signals += f"{overreaction_signal}\n"
+
+        # Update UI or print signals
+        self.result_label.config(text=results + betting_signals)
 
 if __name__ == "__main__":
     root = tk.Tk()
