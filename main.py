@@ -148,16 +148,18 @@ class FootballBettingModel:
 
         return None
 
-    def optimal_betting_window(self, elapsed_minutes, home_odds, away_odds, draw_odds):
+    def optimal_betting_window(self, elapsed_minutes):
         """Suggests best match phase to place lay bets based on in-game trends."""
-        if elapsed_minutes < 30 and min(home_odds, away_odds) < 1.8:
-            return "⏳ Early game: Odds still settling. Be cautious with lays."
-        elif elapsed_minutes in range(60, 75) and max(home_odds, away_odds) > 2.5:
-            return "🔥 60-75 min: Strongest attack period. Possible lay opportunity."
-        elif elapsed_minutes > 80 and draw_odds < 2.0:
-            return "⚠️ Late game: Market tightening. Lay bets riskier now."
-
-        return None
+        if elapsed_minutes < 30:
+            return "⚠️ Early Game: High volatility. Only bet if extreme value."
+        elif 30 <= elapsed_minutes < 45:
+            return "🔍 30-45 min: Watching trends. Lay if strong edge detected."
+        elif 45 <= elapsed_minutes < 60:
+            return "🛠 45-60 min: Tactical shifts. Lay if favorite struggles."
+        elif 60 <= elapsed_minutes < 75:
+            return "🔥 Prime Betting Window (60-75 min). Strong lay opportunities!"
+        elif elapsed_minutes >= 75:
+            return "⚠️ Late Game: Market tightening. Higher risk on lays."
 
     def calculate_fair_odds(self):
         home_xg = self.fields["Home Xg"].get()
@@ -257,7 +259,16 @@ class FootballBettingModel:
 
         if lay_opportunity:
             edge, outcome, live_odds, stake, liability = lay_opportunity
-            results += f"\n🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f}"
+
+            # Give confidence level based on timing
+            if elapsed_minutes >= 60 and elapsed_minutes < 75:
+                results += f"\n🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} ✅ Best Timing!"
+            elif elapsed_minutes >= 75:
+                results += f"\n🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} ⚠️ Late-game risk!"
+            elif elapsed_minutes < 30:
+                results += f"\n🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} ⚠️ High volatility!"
+            else:
+                results += f"\n🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} 🚦 Mid-game adjustment."
         else:
             results += "\nNo value lay bets found."
 
@@ -279,7 +290,7 @@ class FootballBettingModel:
         # Detect momentum trends
         momentum_signal = self.detect_momentum_peak()
         reversal_signal = self.detect_reversal_point()
-        betting_window_signal = self.optimal_betting_window(elapsed_minutes, live_home_odds, live_away_odds, live_draw_odds)
+        betting_window_signal = self.optimal_betting_window(elapsed_minutes)
 
         # Detect market overreaction (for signals only)
         overreaction_signal = self.detect_market_overreaction(fair_home_odds, live_home_odds, fair_away_odds, live_away_odds, fair_draw_odds, live_draw_odds)
