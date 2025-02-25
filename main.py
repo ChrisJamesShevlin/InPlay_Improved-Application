@@ -247,7 +247,7 @@ class FootballBettingModel:
             edge = (fair_odds - live_odds) / fair_odds if live_odds < fair_odds else 0.0000
             results += f"{outcome}: Fair {fair_odds:.2f} | Edge {edge:.4f}\n"
             
-            if live_odds > fair_odds and live_odds < 20 and edge > max_edge:
+            if live_odds < fair_odds and live_odds < 20 and edge > max_edge:
                 kelly_fraction = self.dynamic_kelly(edge, live_odds)
                 stake = account_balance * kelly_fraction
                 liability = stake * (live_odds - 1)
@@ -257,7 +257,6 @@ class FootballBettingModel:
 
         if lay_opportunity:
             edge, outcome, live_odds, stake, liability = lay_opportunity
-            color = "red"  # Highlight the best edge in red
             results += f"\n🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f}"
         else:
             results += "\nNo value lay bets found."
