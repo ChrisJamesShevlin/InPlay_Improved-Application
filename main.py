@@ -81,17 +81,10 @@ class FootballBettingModel:
         decay_factor = max(0.5, 1 - (elapsed_minutes / 90))
         return lambda_xg * decay_factor
 
-    def dynamic_kelly(self, edge, odds):
-        if odds >= 20.0:
-            return 0  # Avoid extreme odds
-        
-        if odds > 1.0:
-            # Scale the fraction based on the size of the edge
-            fraction = 0.18 if odds < 2.0 else 0.12 if odds < 8.0 else 0.06
-            scaled_fraction = fraction * (edge / (odds - 1))
-            return max(0, scaled_fraction)
-        
-        return 0
+    def dynamic_kelly(self, edge):
+        # Fixed 12% Kelly criterion regardless of odds
+        kelly_fraction = 0.12 * edge
+        return max(0, kelly_fraction)
 
     def update_history(self, key, value):
         """Store the last 10 values of a given key."""
@@ -250,9 +243,9 @@ class FootballBettingModel:
             results += f"{outcome}: Fair {fair_odds:.2f} | Edge {edge:.4f}\n"
             
             if live_odds < fair_odds and live_odds < 20 and edge > max_edge:
-                kelly_fraction = self.dynamic_kelly(edge, live_odds)
-                stake = account_balance * kelly_fraction
-                liability = stake * (live_odds - 1)
+                kelly_fraction = self.dynamic_kelly(edge)
+                liability = account_balance * kelly_fraction
+                stake = liability / (live_odds - 1)
 
                 lay_opportunity = (edge, outcome, live_odds, stake, liability)
                 max_edge = edge  # Track the highest edge
@@ -262,13 +255,13 @@ class FootballBettingModel:
 
             # Give confidence level based on timing
             if elapsed_minutes >= 60 and elapsed_minutes < 75:
-                results += f"\n🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} ✅ Best Timing!"
+                results += f"\n🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f} ✅ Best Timing!"
             elif elapsed_minutes >= 75:
-                results += f"\n🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} ⚠️ Late-game risk!"
+                results += f"\n🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f} ⚠️ Late-game risk!"
             elif elapsed_minutes < 30:
-                results += f"\n🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} ⚠️ High volatility!"
+                results += f"\n🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f} ⚠️ High volatility!"
             else:
-                results += f"\n🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} 🚦 Mid-game adjustment."
+                results += f"\n🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f} 🚦 Mid-game adjustment."
         else:
             results += "\nNo value lay bets found."
 
