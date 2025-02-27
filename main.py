@@ -77,9 +77,18 @@ class FootballBettingModel:
             return p_zero + (1 - p_zero) * exp(-lam)
         return (1 - p_zero) * ((lam ** k) * exp(-lam)) / factorial(k)
 
-    def time_decay_adjustment(self, lambda_xg, elapsed_minutes):
-        decay_factor = max(0.5, 1 - (elapsed_minutes / 90))
-        return lambda_xg * decay_factor
+    def time_decay_adjustment(self, lambda_xg, elapsed_minutes, in_game_xg):
+        remaining_minutes = 90 - elapsed_minutes
+        base_decay = exp(-0.03 * elapsed_minutes)  # Default decay
+
+        # Adaptive decay: Less decay if xG is high
+        if in_game_xg > 1.5:
+            base_decay *= 1.1  # Reduce decay for attacking teams
+        elif remaining_minutes < 10:
+            base_decay *= 0.5  # Increase decay in final 10 minutes
+
+        adjusted_lambda = lambda_xg * base_decay
+        return max(0.05, adjusted_lambda)  # Ensure a minimum probability
 
     def dynamic_kelly(self, edge):
         # Fixed 12% Kelly criterion regardless of odds
@@ -185,14 +194,24 @@ class FootballBettingModel:
         self.update_history("away_possession", away_possession)
 
         remaining_minutes = 90 - elapsed_minutes
-        lambda_home = self.time_decay_adjustment(in_game_home_xg + (home_xg * remaining_minutes / 90), elapsed_minutes)
-        lambda_away = self.time_decay_adjustment(in_game_away_xg + (away_xg * remaining_minutes / 90), elapsed_minutes)
+        lambda_home = self.time_decay_adjustment(in_game_home_xg + (home_xg * remaining_minutes / 90), elapsed_minutes, in_game_home_xg)
+        lambda_away = self.time_decay_adjustment(in_game_away_xg + (away_xg * remaining_minutes / 90), elapsed_minutes, in_game_away_xg)
 
         lambda_home = (lambda_home * 0.85) + ((home_avg_goals_scored / max(0.75, away_avg_goals_conceded)) * 0.15)
         lambda_away = (lambda_away * 0.85) + ((away_avg_goals_scored / max(0.75, home_avg_goals_conceded)) * 0.15)
 
         lambda_home *= 1 + ((home_possession - 50) / 200)
         lambda_away *= 1 + ((away_possession - 50) / 200)
+
+        # Boost for high in-game xG
+        if in_game_home_xg > 1.2:
+            lambda_home *= 1.15
+        if in_game_away_xg > 1.2:
+            lambda_away *= 1.15
+
+        # Adjust based on shots on target
+        lambda_home *= 1 + (home_sot / 20)
+        lambda_away *= 1 + (away_sot / 20)
 
         home_win_probability, away_win_probability, draw_probability = 0, 0, 0
 
@@ -218,22 +237,23 @@ class FootballBettingModel:
         fair_away_odds = 1 / away_win_probability
         fair_draw_odds = 1 / draw_probability
 
-        # Weighted calculation of which team is more likely to score next
-        home_contribution = (lambda_home * 0.4) + (in_game_home_xg * 0.3) + (home_sot * 0.2) + (home_goals * 0.1)
-        away_contribution = (lambda_away * 0.4) + (in_game_away_xg * 0.3) + (away_sot * 0.2) + (away_goals * 0.1)
+        # Calculate goal probability for remaining time
+        momentum_boost = 1.0
+        trend_home_xg = self.get_recent_trend("home_xg")
+        trend_away_xg = self.get_recent_trend("away_xg")
+        trend_home_sot = self.get_recent_trend("home_sot")
+        trend_away_sot = self.get_recent_trend("away_sot")
 
-        if home_contribution > away_contribution:
-            goal_source = "Home"
-            lambda_home -= 0.04  # Bias toward stronger team
-        elif away_contribution > home_contribution:
-            goal_source = "Away"
-            lambda_away += 0.04  # More variance for weaker team
-        else:
-            goal_source = "Even"
+        if trend_home_xg > 0.3 or trend_home_sot > 2:
+            momentum_boost += min(0.25, trend_home_xg * 0.1 + trend_home_sot * 0.05)  # Scale up to 25%
+        if trend_away_xg > 0.3 or trend_away_sot > 2:
+            momentum_boost += min(0.25, trend_away_xg * 0.1 + trend_away_sot * 0.05)
 
-        lay_opportunity = None
-        max_edge = 0  # Track the highest edge
+        scaling_factor = 60 if elapsed_minutes < 60 else 45  # More weight in second half
+        goal_probability = (1 - exp(-((lambda_home + lambda_away) * remaining_minutes / scaling_factor))) * momentum_boost
+        goal_probability = max(0.15, min(0.90, goal_probability))  # Ensure probability is realistic
 
+        lay_opportunities = []
         results = "Fair Odds & Edge:\n"
 
         for outcome, fair_odds, live_odds in [("Home", fair_home_odds, live_home_odds),
@@ -242,26 +262,25 @@ class FootballBettingModel:
             edge = (fair_odds - live_odds) / fair_odds if live_odds < fair_odds else 0.0000
             results += f"{outcome}: Fair {fair_odds:.2f} | Edge {edge:.4f}\n"
             
-            if live_odds < fair_odds and live_odds < 20 and edge > max_edge:
+            if live_odds < fair_odds and live_odds < 20 and edge > 0:
                 kelly_fraction = self.dynamic_kelly(edge)
                 liability = account_balance * kelly_fraction
                 stake = liability / (live_odds - 1)
 
-                lay_opportunity = (edge, outcome, live_odds, stake, liability)
-                max_edge = edge  # Track the highest edge
+                lay_opportunities.append((edge, outcome, live_odds, stake, liability))
 
-        if lay_opportunity:
-            edge, outcome, live_odds, stake, liability = lay_opportunity
-
-            # Give confidence level based on timing
-            if elapsed_minutes >= 60 and elapsed_minutes < 75:
-                results += f"\n🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f} ✅ Best Timing!"
-            elif elapsed_minutes >= 75:
-                results += f"\n🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f} ⚠️ Late-game risk!"
-            elif elapsed_minutes < 30:
-                results += f"\n🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f} ⚠️ High volatility!"
-            else:
-                results += f"\n🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f} 🚦 Mid-game adjustment."
+        if lay_opportunities:
+            results += "\nValue Lay Bets:\n"
+            for edge, outcome, live_odds, stake, liability in lay_opportunities:
+                # Give confidence level based on timing
+                if elapsed_minutes >= 60 and elapsed_minutes < 75:
+                    results += f"🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f} ✅ Best Timing!\n"
+                elif elapsed_minutes >= 75:
+                    results += f"🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f} ⚠️ Late-game risk!\n"
+                elif elapsed_minutes < 30:
+                    results += f"🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f} ⚠️ High volatility!\n"
+                else:
+                    results += f"🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f} 🚦 Mid-game adjustment.\n"
         else:
             results += "\nNo value lay bets found."
 
@@ -278,7 +297,7 @@ class FootballBettingModel:
         elif trend_away_xg > 0.2 or trend_away_sot > 1 or trend_away_possession > 3:
             results += "\n📉 Away team gaining momentum! Consider value bet.\n"
 
-        results += f"\nGoal Probability: {home_win_probability + away_win_probability:.2%} ({goal_source})\n"
+        results += f"\nGoal Probability: {goal_probability:.2%}\n"
 
         # Detect momentum trends
         momentum_signal = self.detect_momentum_peak()
