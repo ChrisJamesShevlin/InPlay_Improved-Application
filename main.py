@@ -163,6 +163,30 @@ class FootballBettingModel:
         elif elapsed_minutes >= 75:
             return "⚠️ Late Game: Market tightening. Higher risk on lays."
 
+    def adjust_xg_for_scoreline(self, home_goals, away_goals, lambda_home, lambda_away, elapsed_minutes):
+        goal_diff = home_goals - away_goals  # Positive if Home is leading, negative if Away is leading
+
+        # Losing team tends to attack more, winning team defends more
+        if goal_diff == 1:  # If Home is leading by 1 goal
+            lambda_home *= 0.85  # Reduce attacking intent of leading team
+            lambda_away *= 1.15  # Increase attacking intent of losing team
+        elif goal_diff == -1:  # If Away is leading by 1 goal
+            lambda_home *= 1.15
+            lambda_away *= 0.85
+        elif goal_diff == 0:  # If it's a draw
+            lambda_home *= 1.05  # Slight boost if game is level
+            lambda_away *= 1.05
+        elif abs(goal_diff) >= 2:  # If a team leads by 2 or more
+            lambda_home *= 0.75
+            lambda_away *= 1.25 if goal_diff > 0 else 0.75  # Adjust based on losing team attack
+
+        # If it's late in the game, suppress attacking xG even more
+        if elapsed_minutes > 75 and abs(goal_diff) >= 1:
+            lambda_home *= 0.7
+            lambda_away *= 1.3 if goal_diff > 0 else 0.7
+
+        return lambda_home, lambda_away
+
     def calculate_fair_odds(self):
         home_xg = self.fields["Home Xg"].get()
         away_xg = self.fields["Away Xg"].get()
@@ -196,6 +220,9 @@ class FootballBettingModel:
         remaining_minutes = 90 - elapsed_minutes
         lambda_home = self.time_decay_adjustment(in_game_home_xg + (home_xg * remaining_minutes / 90), elapsed_minutes, in_game_home_xg)
         lambda_away = self.time_decay_adjustment(in_game_away_xg + (away_xg * remaining_minutes / 90), elapsed_minutes, in_game_away_xg)
+
+        # Apply scoreline-based xG adjustments
+        lambda_home, lambda_away = self.adjust_xg_for_scoreline(home_goals, away_goals, lambda_home, lambda_away, elapsed_minutes)
 
         lambda_home = (lambda_home * 0.85) + ((home_avg_goals_scored / max(0.75, away_avg_goals_conceded)) * 0.15)
         lambda_away = (lambda_away * 0.85) + ((away_avg_goals_scored / max(0.75, home_avg_goals_conceded)) * 0.15)
@@ -253,8 +280,11 @@ class FootballBettingModel:
         goal_probability = (1 - exp(-((lambda_home + lambda_away) * remaining_minutes / scaling_factor))) * momentum_boost
         goal_probability = max(0.15, min(0.90, goal_probability))  # Ensure probability is realistic
 
+        # Show goal probability in results
+        results = f"\n⚽ Goal Probability: {goal_probability:.2%}\n"
+
         lay_opportunities = []
-        results = "Fair Odds & Edge:\n"
+        results += "Fair Odds & Edge:\n"
 
         for outcome, fair_odds, live_odds in [("Home", fair_home_odds, live_home_odds),
                                               ("Away", fair_away_odds, live_away_odds),
@@ -294,11 +324,7 @@ class FootballBettingModel:
         # If a team is gaining momentum, adjust fair odds weight slightly
         if trend_home_xg > 0.2 or trend_home_sot > 1 or trend_home_possession > 3:
             results += "\n📈 Home team gaining momentum! Consider value bet.\n"
-        elif trend_away_xg > 0.2 or trend_away_sot > 1 or trend_away_possession > 3:
-            results += "\n📉 Away team gaining momentum! Consider value bet.\n"
-
-        results += f"\nGoal Probability: {goal_probability:.2%}\n"
-
+        
         # Detect momentum trends
         momentum_signal = self.detect_momentum_peak()
         reversal_signal = self.detect_reversal_point()
