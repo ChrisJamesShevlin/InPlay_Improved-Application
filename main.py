@@ -18,6 +18,27 @@ class FootballBettingModel:
         self.history_length = 10  # Store last 10 updates
 
     def create_widgets(self):
+        # Create a canvas and scrollbar
+        self.canvas = tk.Canvas(self.root)
+        self.scrollbar = ttk.Scrollbar(self.root, orient="vertical", command=self.canvas.yview)
+        self.scrollable_frame = ttk.Frame(self.canvas)
+
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(
+                scrollregion=self.canvas.bbox("all")
+            )
+        )
+
+        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.scrollbar.grid(row=0, column=1, sticky="ns")
+
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
+
         self.fields = {
             "Home Avg Goals Scored": tk.DoubleVar(),
             "Home Avg Goals Conceded": tk.DoubleVar(),
@@ -43,19 +64,19 @@ class FootballBettingModel:
 
         row = 0
         for field, var in self.fields.items():
-            label = ttk.Label(self.root, text=field)
+            label = ttk.Label(self.scrollable_frame, text=field)
             label.grid(row=row, column=0, sticky=tk.W, padx=5, pady=5)
-            entry = ttk.Entry(self.root, textvariable=var)
+            entry = ttk.Entry(self.scrollable_frame, textvariable=var)
             entry.grid(row=row, column=1, padx=5, pady=5)
             row += 1
 
-        calculate_button = ttk.Button(self.root, text="Calculate", command=self.calculate_fair_odds)
+        calculate_button = ttk.Button(self.scrollable_frame, text="Calculate", command=self.calculate_fair_odds)
         calculate_button.grid(row=row, column=0, columnspan=2, pady=10)
         
-        reset_button = ttk.Button(self.root, text="Reset Fields", command=self.reset_fields)
+        reset_button = ttk.Button(self.scrollable_frame, text="Reset Fields", command=self.reset_fields)
         reset_button.grid(row=row+1, column=0, columnspan=2, pady=10)
 
-        self.result_label = ttk.Label(self.root, text="")
+        self.result_label = ttk.Label(self.scrollable_frame, text="")
         self.result_label.grid(row=row+2, column=0, columnspan=2, pady=10)
 
     def reset_fields(self):
@@ -311,7 +332,7 @@ class FootballBettingModel:
                 if elapsed_minutes >= 60 and elapsed_minutes < 75:
                     results += f"🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f} ✅ Best Timing!\n"
                 elif elapsed_minutes >= 75:
-                    results += f"🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f} ⚠️ Late-game risk!\n"
+                                    results += f"🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f} ⚠️ Late-game risk!\n"
                 elif elapsed_minutes < 30:
                     results += f"🔴 Lay {outcome} at {live_odds:.2f} | Edge: {edge:.4f} | Stake: {stake:.2f} | Liability: {liability:.2f} ⚠️ High volatility!\n"
                 else:
