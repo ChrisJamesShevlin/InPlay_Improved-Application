@@ -5,7 +5,7 @@ from math import exp, factorial
 class FootballBettingModel:
     def __init__(self, root):
         self.root = root
-        self.root.title("Football Betting Model")
+        self.root.title("Momentus Edge")
         self.create_widgets()
         self.history = {
             "home_xg": [],
@@ -113,8 +113,8 @@ class FootballBettingModel:
         return max(0.1, adjusted_lambda)  # Ensure a minimum probability
 
     def dynamic_kelly(self, edge):
-        # Fixed 12% Kelly criterion regardless of odds
-        kelly_fraction = 0.12 * edge
+        # Fixed 5% Kelly criterion regardless of odds
+        kelly_fraction = 0.05 * edge
         return max(0, kelly_fraction)
 
     def update_history(self, key, value):
